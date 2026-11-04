@@ -1,0 +1,30 @@
+{
+  "name": "gestion-stock-interne",
+  "version": "1.0.0",
+  "description": "Application de bureau de gestion de stock interne : réceptions (entrées), distributions (sorties) et suivi — sans achat ni vente.",
+  "main": "main.js",
+  "license": "MIT",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable"
+  },
+  "build": {
+    "appId": "tn.csfmi.stockinterne",
+    "productName": "CSFMI-Stock",
+    "directories": { "output": "dist" },
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**/*",
+      "renderer/**/*"
+    ],
+    "win": { "target": ["portable"] },
+    "portable": {
+      "artifactName": "CSFMI-Stock-Portable-${version}.exe"
+    }
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-builder": "^26.18.0"
+  }
+}
