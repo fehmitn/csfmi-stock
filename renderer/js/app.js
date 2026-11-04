@@ -68,6 +68,17 @@ function confirmDlg(message, titre = 'Confirmation') {
   });
 }
 
+/**
+ * Export rapide en fichier Excel (.xlsx).
+ * sheets : [{ name, headers, rows, widths?, numCols? }]
+ */
+async function exporterXlsx(filename, sheets) {
+  const r = await window.api.request('xlsxExport', { filename, sheets });
+  if (!r.ok) { toast(r.error, 'error'); return null; }
+  if (r.data && r.data.filePath) toast('Excel exporté : ' + r.data.filePath);
+  return r.data;
+}
+
 function slug(s) {
   return String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-zA-Z0-9]+/g, '-').replace(/^-+|-+$/g, '').toLowerCase();
@@ -248,6 +259,7 @@ async function vueStock() {
       </div>
       <div class="gauche">
         <button class="btn secondaire petit" id="stk-csv">🧮 Export CSV</button>
+        <button class="btn secondaire petit" id="stk-xlsx">📊 Export Excel</button>
         <button class="btn secondaire petit" id="stk-pdf">📄 Export PDF</button>
       </div>
     </div>
@@ -259,6 +271,9 @@ async function vueStock() {
   $('#stk-cat').onchange = e => { f.categorieId = e.target.value; majStock(); };
   $('#stk-masque').onchange = e => { f.masquerStockZero = e.target.checked; majStock(); };
   $('#stk-csv').onclick = () => exportStockCsv();
+  $('#stk-xlsx').onclick = () => exporterXlsx(`etat-stock-${todayISO()}.xlsx`, [
+    { name: 'Stock', headers: ['Code', 'Désignation', 'Catégorie', 'Unité', 'Stock', "Seuil d'alerte"], rows: (state.stockCourant || []).map(a => [a.code, a.designation, a.categorie, a.unite, a.stock, a.seuil]), widths: [14, 42, 20, 12, 10, 12], numCols: [5, 6] }
+  ]);
   $('#stk-pdf').onclick = () => exportStockPdf();
   majStock();
 }
@@ -845,6 +860,7 @@ async function vueMouvements() {
       </div>
       <div class="gauche">
         <button class="btn secondaire petit" id="mv-csv">🧮 Export CSV</button>
+        <button class="btn secondaire petit" id="mv-xlsx">📊 Export Excel</button>
         <button class="btn secondaire petit" id="mv-pdf">📄 Export PDF</button>
       </div>
     </div>
@@ -857,6 +873,9 @@ async function vueMouvements() {
   $('#mv-csv').onclick = () => exporterCsv(`mouvements-${todayISO()}.csv`,
     ['Date', 'Type', 'Référence', 'Article', 'Quantité', 'Unité', 'Source/Département'],
     state.lignesMouvements.map(m => [fmtDate(m.date), m.type === 'entree' ? 'Entrée' : (m.nature === 'destruction' ? 'Destruction' : 'Sortie'), m.reference, m.designation, m.quantite, m.unite, m.partenaire]));
+  $('#mv-xlsx').onclick = () => exporterXlsx(`mouvements-${todayISO()}.xlsx`, [
+    { name: 'Mouvements', headers: ['Date', 'Type', 'Référence', 'Article', 'Quantité', 'Unité', 'Source/Département'], rows: state.lignesMouvements.map(m => [fmtDate(m.date), m.type === 'entree' ? 'Entrée' : (m.nature === 'destruction' ? 'Destruction' : 'Sortie'), m.reference, m.designation, m.quantite, m.unite, m.partenaire]), widths: [12, 14, 14, 42, 10, 10, 30], numCols: [5] }
+  ]);
   $('#mv-pdf').onclick = () => exporterPdf('Journal des mouvements', `mouvements-${todayISO()}.pdf`, htmlTableMv(state.lignesMouvements));
   majMv();
 }
@@ -1021,11 +1040,21 @@ function afficherRapport(data) {
       <div class="totaux-rapport">${esc(data.note)}</div>
       <div class="barre-haut" style="margin-top:14px;justify-content:flex-start">
         <button class="btn secondaire petit" id="rap-csv">🧮 Exporter CSV</button>
+        <button class="btn secondaire petit" id="rap-xlsx">📊 Exporter Excel</button>
         <button class="btn petit" id="rap-pdf">📄 Exporter PDF</button>
       </div>
     </div>`;
   $('#rap-csv').onclick = () => exporterCsv(data.csv, data.entetes, data.lignesCsv);
+  $('#rap-xlsx').onclick = () => exporterXlsx(data.csv.replace(/\.csv$/, '.xlsx'), [
+    { name: 'Rapport', headers: data.entetes, rows: data.lignesCsv, numCols: rowsNumCols(data.entetes) }
+  ]);
   $('#rap-pdf').onclick = () => exporterPdf(data.titre, data.pdf, data.corps + `<p class="sans">${esc(data.note)}</p>`);
+}
+
+function rowsNumCols(entetes) {
+  const idx = [];
+  entetes.forEach((h, i) => { if (/quantité|stock|seuil/i.test(h)) idx.push(i + 1); });
+  return idx;
 }
 
 /* ============================ Vue : Paramètres ============================ */
@@ -1042,6 +1071,19 @@ async function vueParametres() {
         <button class="btn secondaire" id="p-restaurer">♻️ Restaurer une sauvegarde</button>
       </div>
       <p class="muted">Faites une sauvegarde régulière (par ex. chaque fin de semaine) sur une clé USB ou le réseau de l'entreprise.</p>
+    </div>
+    <div class="carte">
+      <h3>📊 Excel</h3>
+      <div class="barre-haut" style="margin:0;justify-content:flex-start">
+        <button class="btn secondaire" id="p-xlsx-modele">⬇️ Télécharger le modèle Excel</button>
+        <button class="btn secondaire" id="p-xlsx-import">📥 Importer des articles depuis Excel</button>
+      </div>
+      <p class="muted" style="margin-top:10px">
+        Pour créer des articles en masse : téléchargez le modèle, remplissez une ligne par article
+        (les colonnes <b>Code · Désignation · Catégorie · Unité · Seuil d'alerte</b>),
+        enregistrez le fichier, puis importez-le ici. Les catégories inexistantes seront créées automatiquement,
+        et les articles déjà enregistrés (même code) seront ignorés sans bloquer l'import.
+      </p>
     </div>
     <div class="carte">
       <h3>🧪 Outils</h3>
@@ -1069,6 +1111,41 @@ async function vueParametres() {
       const r = await req('restore');
       if (r && !r.canceled) { toast(`Restauration terminée : ${r.articles} articles, ${r.entrees} réceptions, ${r.sorties} distributions.`); go('dashboard'); }
     } catch (e) { }
+  };
+  $('#p-xlsx-modele').onclick = () => {
+    exporterXlsx('modele-articles-gestion-stock.xlsx', [
+      { name: 'Articles', headers: ['Code', 'Désignation', 'Catégorie', 'Unité', "Seuil d'alerte"], rows: [], widths: [14, 44, 22, 12, 14] },
+      { name: 'Instructions', headers: ['N°', 'Instruction'], rows: [
+        [1, 'Ouvrez la feuille « Articles » et remplissez une ligne par article (ne modifiez pas la ligne d\'en-têtes).'],
+        [2, 'La colonne « Désignation » est obligatoire. « Code » et « Catégorie » sont facultatifs.'],
+        [3, 'La catégorie est créée automatiquement si elle n\'existe pas encore dans l\'application.'],
+        [4, '« Seuil d\'alerte » : un nombre (laissez vide ou 0 si non concerné).'],
+        [5, 'Le stock se calcule automatiquement : ne mettez pas de colonne stock dans ce fichier.'],
+        [6, 'Les articles dont le code existe déjà dans l\'application sont ignorés (signalés après l\'import).'],
+        [7, 'Enregistrez le fichier en .xlsx puis importez-le ici : Paramètres → Importer des articles depuis Excel.']
+      ], widths: [5, 90] }
+    ]);
+  };
+  $('#p-xlsx-import').onclick = async () => {
+    if (!(await confirmDlg('Importer des articles depuis un fichier Excel ? Les articles existants sont conservés : seuls les nouveaux sont ajoutés.', 'Import Excel'))) return;
+    const r = await window.api.request('xlsxImportArticles');
+    if (!r.ok) { toast(r.error, 'error'); return; }
+    if (r.data.canceled) return;
+    const { importes, categoriesCreees, erreurs, fichier } = r.data;
+    let html = `<p>📄 <b>${importes}</b> article(s) importé(s) depuis <b>${esc(fichier)}</b></p>`;
+    if (categoriesCreees) html += `<p class="muted">${categoriesCreees} nouvelle(s) catégorie(s) créée(s) automatiquement.</p>`;
+    if (erreurs && erreurs.length) {
+      html += `<p style="color:var(--rouge);font-weight:600;margin-top:10px">${erreurs.length} ligne(s) ignorée(s) :</p>
+        <ul style="margin:6px 0 0 18px;font-size:12.5px" class="liste-erreurs">
+        ${erreurs.slice(0, 15).map(e => `<li>Ligne ${e.ligne} : ${esc(e.motif)}${e.designation ? ' — « ' + esc(e.designation) + ' »' : ''}</li>`).join('')}
+        ${erreurs.length > 15 ? `<li>… et ${erreurs.length - 15} autre(s)</li>` : ''}
+        </ul>`;
+    }
+    modal(`
+      <div class="boite-t">📊 Résultat de l'import Excel<button class="btn-icon" data-act="closeModal">✕</button></div>
+      <div class="boite-c">${html}</div>
+      <div class="boite-p"><button class="btn" data-act="closeModal">Fermer</button></div>`);
+    if (importes > 0) toast('Import terminé : ' + importes + ' article(s) ajouté(s).', 'success');
   };
   $('#p-demo').onclick = async () => {
     if (!(await confirmDlg('Charger des données de démonstration (articles, départements, bons) ?', 'Démonstration'))) return;

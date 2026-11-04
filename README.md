@@ -30,14 +30,25 @@ npm start         # démarre l'application
 
 ## 🗄️ Données
 
-- Stockées localement, aucune connexion Internet requise
-- Fichier : `%APPDATA%\gestion-stock-interne\gestion-stock.json`
+- Stockées localement dans une base **SQLite** (`gestion-stock.db`), aucune connexion Internet requise
+- Fichier : `%APPDATA%\gestion-stock-interne\gestion-stock.db`
 - Faites une **sauvegarde régulière** (menu Paramètres) sur une clé USB ou le réseau
+- Le fichier .db peut être inspecté avec n'importe quel outil SQLite
+
+## 📊 Excel
+
+- **Exports Excel (.xlsx)** mis en forme : état du stock, journal des mouvements, tous les rapports
+- **Import d'articles en masse** (Paramètres) : téléchargez le modèle Excel, remplissez vos articles
+  (Code · Désignation · Catégorie · Unité · Seuil d'alerte), enregistrez puis importez.
+  Les catégories inexistantes sont créées automatiquement, les doublons (code déjà connu) sont signalés
+  sans bloquer le reste de l'import.
 
 ## 🧊 Règles métier
 
 - Le stock est **calculé automatiquement** : il ne se modifie pas directement
 - Une sortie ne peut **jamais dépasser** le stock disponible
+- 🧨 **Destruction d'articles** (périmés, abîmés) : sorte de bon sans département, l'article
+  est retiré physiquement du stock et tracé séparément des distributions
 - Supprimer un bon de réception est **bloqué** si cela rendrait le stock négatif
   (articles déjà distribués)
 - Un article / une source / un département utilisé(e) dans des bons ne peut pas être supprimé(e)

@@ -2,6 +2,7 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const ExcelJS = require('exceljs');
 const db = require('./lib/db');
 
 let win = null;
@@ -24,8 +25,8 @@ function createWindow() {
   win.on('closed', () => { win = null; });
 }
 
-app.whenReady().then(() => {
-  db.init(path.join(app.getPath('userData'), 'gestion-stock.json'));
+app.whenReady().then(async () => {
+  await db.init(path.join(app.getPath('userData'), 'gestion-stock.db'));
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -35,6 +36,71 @@ app.whenReady().then(() => {
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
+
+/* ============================== Export Excel ============================== */
+
+async function ecrireXlsx(dest, sheets) {
+  const wb = new ExcelJS.Workbook();
+  wb.creator = 'Gestion de Stock Interne';
+  wb.created = new Date();
+  for (const sh of sheets) {
+    const ws = wb.addWorksheet(sh.name || 'Feuille', { views: [{ state: 'frozen', ySplit: 1 }] });
+    ws.columns = (sh.headers || []).map((h, i) => ({ header: h, width: (sh.widths && sh.widths[i]) || Math.max(14, String(h || '').length + 4) }));
+    for (const r of (sh.rows || [])) ws.addRow(r);
+    const entete = ws.getRow(1);
+    entete.font = { bold: true, color: { argb: 'FF1E3A5F' } };
+    entete.fill = { type: 'pattern', pattern: 'solid', fillColor: { argb: 'FFEFF6FF' } };
+    entete.alignment = { vertical: 'middle' };
+    for (const c of (sh.numCols || [])) ws.getColumn(c).numFmt = '#,##0.###';
+    if ((sh.rows || []).length && ws.columnCount > 1) {
+      ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: ws.columnCount } };
+    }
+  }
+  await wb.xlsx.writeFile(dest);
+}
+
+async function lireXlsxArticles(fichier) {
+  const wb = new ExcelJS.Workbook();
+  await wb.xlsx.load(fs.readFileSync(fichier));
+  const ws = wb.worksheets[0];
+  if (!ws || ws.rowCount < 2) throw new Error('La première feuille du fichier est vide.');
+  const norm = v => {
+    if (v == null) return '';
+    if (typeof v === 'object') return String(v.text ?? v.result ?? '').trim();
+    return String(v).trim();
+  };
+  const enClair = v => norm(v).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const cols = {};
+  ws.getRow(1).eachCell({ includeEmpty: true }, (cell, col) => {
+    const h = enClair(cell.value);
+    if (h === 'code') cols.code = col;
+    else if (h === 'designation') cols.designation = col;
+    else if (h === 'categorie') cols.categorie = col;
+    else if (h === 'unite') cols.unite = col;
+    else if (h.startsWith('seuil')) cols.seuil = col;
+  });
+  if (!cols.designation) throw new Error('Colonne « Désignation » introuvable sur la ligne d\'en-tête. Utilisez le modèle Excel fourni dans Paramètres.');
+  const rows = [];
+  ws.eachRow({ includeEmpty: false }, (row, num) => {
+    if (num === 1) return;
+    const val = colonne => {
+      if (!colonne) return '';
+      return norm(row.getCell(colonne).value);
+    };
+    const rec = {
+      ligne: num,
+      code: val(cols.code),
+      designation: val(cols.designation),
+      categorie: val(cols.categorie),
+      unite: val(cols.unite),
+      seuil: Number(val(cols.seuil)) || 0
+    };
+    if (!rec.code && !rec.designation && !rec.categorie && !rec.unite) return;
+    rows.push(rec);
+  });
+  if (!rows.length) throw new Error('Aucune ligne d\'article trouvée dans le fichier.');
+  return rows;
+}
 
 /* ============================== Répartition des actions ============================== */
 
@@ -71,11 +137,32 @@ const ACTIONS = {
   rapportParDepartement: (p) => db.rapportParDepartement(p || {}),
   rapportParSource: (p) => db.rapportParSource(p || {}),
 
+  xlsxExport: async (p) => {
+    const r = await dialog.showSaveDialog(win, {
+      title: 'Exporter en Excel',
+      defaultPath: (p && p.filename) || 'export.xlsx',
+      filters: [{ name: 'Classeur Excel', extensions: ['xlsx'] }]
+    });
+    if (r.canceled) return { canceled: true };
+    await ecrireXlsx(r.filePath, (p && p.sheets) || []);
+    return { filePath: r.filePath };
+  },
+  xlsxImportArticles: async () => {
+    const r = await dialog.showOpenDialog(win, {
+      title: 'Importer des articles depuis Excel',
+      properties: ['openFile'],
+      filters: [{ name: 'Classeur Excel', extensions: ['xlsx'] }]
+    });
+    if (r.canceled) return { canceled: true };
+    const resultat = db.importArticles(await lireXlsxArticles(r.filePaths[0]));
+    return { ...resultat, fichier: path.basename(r.filePaths[0]) };
+  },
+
   backup: async () => {
     const r = await dialog.showSaveDialog(win, {
       title: 'Enregistrer une sauvegarde',
-      defaultPath: `sauvegarde-stock-${new Date().toISOString().slice(0, 10)}.json`,
-      filters: [{ name: 'Sauvegarde JSON', extensions: ['json'] }]
+      defaultPath: `sauvegarde-stock-${new Date().toISOString().slice(0, 10)}.db`,
+      filters: [{ name: 'Sauvegarde SQLite', extensions: ['db', 'sqlite'] }]
     });
     if (r.canceled) return { canceled: true };
     return db.backupTo(r.filePath);
@@ -84,11 +171,10 @@ const ACTIONS = {
     const r = await dialog.showOpenDialog(win, {
       title: 'Restaurer une sauvegarde',
       properties: ['openFile'],
-      filters: [{ name: 'Sauvegarde JSON', extensions: ['json'] }]
+      filters: [{ name: 'Sauvegarde SQLite', extensions: ['db', 'sqlite'] }]
     });
     if (r.canceled) return { canceled: true };
-    const data = JSON.parse(fs.readFileSync(r.filePaths[0], 'utf8'));
-    return db.importFrom(data);
+    return db.restoreFrom(r.filePaths[0]);
   },
   seedDemo: () => db.seedDemo(),
   resetAll: () => db.resetAll()
