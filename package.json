@@ -2,6 +2,7 @@
   "name": "gestion-stock-interne",
   "version": "1.0.0",
   "description": "Application de bureau de gestion de stock interne : réceptions (entrées), distributions (sorties) et suivi — sans achat ni vente.",
+  "author": "CSFMI",
   "main": "main.js",
   "license": "MIT",
   "scripts": {
